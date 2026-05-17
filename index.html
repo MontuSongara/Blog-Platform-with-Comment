@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>✍️ NexusBlog | Full-Stack Demo Platform</title>
+  <!-- Tailwind CSS + Font Awesome + Google Fonts for modern UI -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700&display=swap" rel="stylesheet">
+  <style>
+    * { font-family: 'Inter', sans-serif; }
+    body { background: #f9fafb; }
+    .transition-smooth { transition: all 0.2s ease; }
+    .card-hover:hover { transform: translateY(-3px); box-shadow: 0 20px 25px -12px rgba(0,0,0,0.1); }
+    .markdown-preview { line-height: 1.6; }
+    .comment-bubble { background: #f3f4f6; border-radius: 1.5rem; padding: 0.75rem 1rem; }
+    .fade-in { animation: fadeIn 0.25s ease-out; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+    .toast-notif {
+      position: fixed; bottom: 24px; right: 24px; background: #1f2937; color: white;
+      padding: 12px 20px; border-radius: 40px; font-size: 0.9rem; z-index: 1000;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.15); backdrop-filter: blur(4px);
+      transition: opacity 0.2s; font-weight: 500;
+    }
+  </style>
+</head>
+<body class="antialiased">
+
+  <!-- MAIN APP WRAPPER -->
+  <div id="appRoot" class="min-h-screen flex flex-col"></div>
+
+  <script>
+    // ----------------------------- MOCK DATABASE (localStorage) -----------------------------
+    // Keys: 'blog_users', 'blog_posts', 'blog_comments'
+    const STORAGE_KEYS = {
+      USERS: 'blog_users',
+      POSTS: 'blog_posts',
+      COMMENTS: 'blog_comments'
+    };
+
+    // Helper: load / save data
+    function loadData(key, defaultValue = []) {
+      const raw = localStorage.getItem(key);
+      if (!raw) return defaultValue;
+      try { return JSON.parse(raw); } catch(e) { return defaultValue; }
+    }
+    function saveData(key, data) { localStorage.setItem(key, JSON.stringify(data)); }
+
+    // ---- INITIAL SEED (demo users, posts, comments) ----
+    function initializeDatabase() {
+      let users = loadData(STORAGE_KEYS.USERS, []);
+      if (users.length === 0) {
+        // seed two default users
+        users = [
+          { id: 1, username: "emily_coder", password: "emily123", createdAt: new Date().toISOString() },
+          { id: 2, username: "james_writer", password: "james456", createdAt: new Date().toISOString() }
+        ];
+        saveData(STORAGE_KEYS.USERS, users);
+      }
+
+      let posts = loadData(STORAGE_KEYS.POSTS, []);
+      if (posts.length === 0) {
+        posts = [
+          { id: 101, title: "🚀 Getting started with full-stack concepts", content: "Building a blog platform with RESTful logic and local storage simulation is an excellent way to understand CRUD, authentication and realtime interactions. This demo shows how to manage users, posts and comments entirely in the browser with persistent data.", authorId: 1, authorName: "emily_coder", createdAt: new Date(Date.now() - 86400000 * 2).toISOString(), updatedAt: new Date(Date.now() - 86400000 * 2).toISOString() },
+          { id: 102, title: "The art of creative writing", content: "Every great story starts with a single sentence. Share your thoughts, build communities, and engage with readers through comments. This platform supports full ownership: edit or delete your own posts, and moderate your comment section.", authorId: 2, authorName: "james_writer", createdAt: new Date(Date.now() - 86400000).toISOString(), updatedAt: new Date(Date.now() - 86400000).toISOString() }
+        ];
+        saveData(STORAGE_KEYS.POSTS, posts);
+      }
+
+      let comments = loadData(STORAGE_KEYS.COMMENTS, []);
+      if (comments.length === 0 && posts.length) {
+        comments = [
+          { id: 1001, postId: 101, userId: 2, userName: "james_writer", content: "This is super insightful! I love how everything is stored locally but works like a real backend.", createdAt: new Date(Date.now() - 43200000).toISOString() },
+          { id: 1002, postId: 102, userId: 1, userName: "emily_coder", content: "Great perspective! Can't wait to see more posts about storytelling techniques.", createdAt: new Date(Date.now() - 7200000).toISOString() }
+        ];
+        saveData(STORAGE_KEYS.COMMENTS, comments);
+      }
+    }
+
+    // ---------------- AUTH & SESSION ----------------
+    let currentUser = null;   // will be rehydrated from sessionStorage
+    function getCurrentUser() {
+      const sessionUser = sessionStorage.getItem('blog_current_user');
+      if (sessionUser) {
+        try {
+          const user = JSON.parse(sessionUser);
+          const users = loadData(STORAGE_KEYS.USERS, []);
+          const exists = users.find(u => u.id === user.id && u.username === user.username);
+          if (exists) return user;
+          else return null;
+        } catch(e) { return null; }
+      }
+      return null;
+    }
+
+    function setCurrentUser(user) {
+      if (user) {
+        currentUser = user;
+        sessionStorage.setItem('blog_current_user', JSON.stringify(user));
+      } else {
+        currentUser = null;
+        sessionStorage.removeItem('blog_current_user');
+      }
+    }
+
+    // Helper: find user by username
+    function findUserByUsername(username) {
+      const users = loadData(STORAGE_KEYS.USERS, []);
+      return users.find(u => u.username.toLowerCase() === username.toLowerCase());
+    }
+
+    // Register new user
+    function registerUser(username, password) {
+      if (!username || !password) return { success: false, msg: "Username & password required" };
+      if (password.length < 3) return { success: false, msg: "Password must be at least 3 characters" };
+      const users = loadData(STORAGE_KEYS.USERS, []);
+      if (users.find(u => u.username.toLowerCase() === username.toLowerCase())) {
+        return { success: false, msg: "Username already taken" };
+      }
+      const newId = users.length > 0 ? Math.max(...users.map(u => u.id)) + 1 : 1;
+      const newUser = { id: newId, username, password, createdAt: new Date().toISOString() };
+      users.push(newUser);
+      saveData(STORAGE_KEYS.USERS, users);
+      return { success: true, user: { id: newUser.id, username: newUser.username } };
+    }
+
+    // Login
+    function loginUser(username, password) {
+      const users = loadData(STORAGE_KEYS.USERS, []);
+      const user = users.find(u => u.username === username && u.password === password);
+      if (user) return { success: true, user: { id: user.id, username: user.username } };
+      return { success: false, msg: "Invalid credentials" };
+    }
+
+    // ---------- POST CRUD OPERATIONS ----------
+    function getAllPosts() {
+      let posts = loadData(STORAGE_KEYS.POSTS, []);
+      return posts.sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt));
+    }
+
+    function getPostById(postId) {
+      const posts = loadData(STORAGE_KEYS.POSTS, []);
+      return posts.find(p => p.id === postId);
+    }
+
+    function createPost(title, content, authorId, authorName) {
+      if (!title.trim() || !content.trim()) return null;
+      const posts = loadData(STORAGE_KEYS.POSTS, []);
+      const newId = posts.length > 0 ? Math.max(...posts.map(p => p.id)) + 1 : 1000;
+      const newPost = {
+        id: newId,
+        title: title.trim(),
+        content: content.trim(),
+        authorId,
+        authorName,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      posts.push(newPost);
+      saveData(STORAGE_KEYS.POSTS, posts);
+      return newPost;
+    }
+
+    function updatePost(postId, title, content) {
+      const posts = loadData(STORAGE_KEYS.POSTS, []);
+      const index = posts.findIndex(p => p.id === postId);
+      if (index === -1) return false;
+      posts[index].title = title.trim();
+      posts[index].content = content.trim();
+      posts[index].updatedAt = new Date().toISOString();
+      saveData(STORAGE_KEYS.POSTS, posts);
+      return true;
+    }
+
+    function deletePost(postId) {
+      let posts = loadData(STORAGE_KEYS.POSTS, []);
+      const newPosts = posts.filter(p => p.id !== postId);
+      if (newPosts.length === posts.length) return false;
+      saveData(STORAGE_KEYS.POSTS, newPosts);
+      // delete all comments associated with this post
+      let comments = loadData(STORAGE_KEYS.COMMENTS, []);
+      const filteredComments = comments.filter(c => c.postId !== postId);
+      saveData(STORAGE_KEYS.COMMENTS, filteredComments);
+      return true;
+    }
+
+    // ---------- COMMENTS CRUD ----------
+    function getCommentsByPost(postId) {
+      const comments = loadData(STORAGE_KEYS.COMMENTS, []);
+      return comments.filter(c => c.postId === postId).sort((a,b) => new Date(a.createdAt) - new Date(b.createdAt));
+    }
+
+    function addComment(postId, userId, userName, content) {
+      if (!content.trim()) return null;
+      const comments = loadData(STORAGE_KEYS.COMMENTS, []);
+      const newId = comments.length > 0 ? Math.max(...comments.map(c => c.id)) + 1 : 3000;
+      const newComment = {
+        id: newId,
+        postId,
+        userId,
+        userName,
+        content: content.trim(),
+        createdAt: new Date().toISOString()
+      };
+      comments.push(newComment);
+      saveData(STORAGE_KEYS.COMMENTS, comments);
+      return newComment;
+    }
+
+    function deleteComment(commentId, currentUserId) {
+      let comments = loadData(STORAGE_KEYS.COMMENTS, []);
+      const comment = comments.find(c => c.id === commentId);
+      if (!comment) return false;
+      // only author of comment can delete
+      if (comment.userId !== currentUserId) return false;
+      const newComments = comments.filter(c => c.id !== commentId);
+      saveData(STORAGE_KEYS.COMMENTS, newComments);
+      return true;
+    }
+
+    // ---------- UI STATE MANAGEMENT ----------
+    let currentView = 'list';       // list, detail, create, edit
+    let selectedPostId = null;
+    let editPostData = null;         // for edit mode store post object
+
+    // helper to show toast messages
+    function showToast(message, type = 'info') {
+      let toastContainer = document.getElementById('toast-root');
+      if (!toastContainer) {
+        const div = document.createElement('div');
+        div.id = 'toast-root';
+        document.body.appendChild(div);
+        toastContainer = div;
+      }
+      const toast = document.createElement('div');
+      toast.className = 'toast-notif fade-in';
+      toast.innerHTML = `<i class="fas ${type === 'error' ? 'fa-circle-exclamation' : 'fa-circle-check'} mr-2"></i> ${message}`;
+      toastContainer.appendChild(toast);
+      setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300); }, 2800);
+    }
+
+    // Re-render entire app (based on auth & view)
+    function renderApp() {
+      const app = document.getElementById('appRoot');
+      if (!app) return;
+      const user = getCurrentUser();
+      if (!user) {
+        renderAuthScreen(app);
+      } else {
+        currentUser = user;
+        renderBlogDashboard(app);
+      }
+    }
+
+    // RENDER LOGIN / REGISTER PANEL
+    function renderAuthScreen(container) {
+      container.innerHTML = `
+        <div class="min-h-screen flex items-center justify-center bg-gradient-to-br from-indigo-50 via-white to-gray-50 px-4">
+          <div class="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 border border-gray-100 transition-smooth">
+            <div class="text-center mb-6">
+              <i class="fas fa-feather-alt text-4xl text-indigo-500"></i>
+              <h2 class="text-3xl font-bold mt-3 text-gray-800">NexusBlog</h2>
+              <p class="text-gray-500 mt-1">Write. Share. Discuss.</p>
+            </div>
+            <div id="authTabs" class="flex gap-2 mb-6 bg-gray-100 p-1 rounded-xl">
+              <button id="tabLogin" class="flex-1 py-2 rounded-lg font-medium transition-all bg-white shadow-sm text-indigo-600">Login</button>
+              <button id="tabRegister" class="flex-1 py-2 rounded-lg font-medium text-gray-600">Register</button>
+            </div>
+            <div id="authFormContainer"></div>
+          </div>
+        </div>
+      `;
+      let activeTab = 'login';
+      function renderForm() {
+        const formDiv = document.getElementById('authFormContainer');
+        if (!formDiv) return;
+        if (activeTab === 'login') {
+          formDiv.innerHTML = `
+            <form id="loginForm" class="space-y-4">
+              <div><label class="block text-sm font-medium text-gray-700">Username</label><input type="text" id="loginUsername" class="mt-1 w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500" placeholder="emily_coder" required></div>
+              <div><label class="block text-sm font-medium text-gray-700">Password</label><input type="password" id="loginPassword" class="mt-1 w-full px-4 py-2 border border-gray-300 rounded-xl" placeholder="••••••" required></div>
+              <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-xl transition">Sign in →</button>
+            </form>
+          `;
+          document.getElementById('loginForm')?.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const username = document.getElementById('loginUsername').value.trim();
+            const password = document.getElementById('loginPassword').value;
+            const res = loginUser(username, password);
+            if (res.success) {
+              setCurrentUser(res.user);
+              showToast(`Welcome back, ${res.user.username}!`, 'success');
+              renderApp();
+            } else {
+              showToast(res.msg, 'error');
+            }
+          });
+        } else {
+          formDiv.innerHTML = `
+            <form id="registerForm" class="space-y-4">
+              <div><label class="block text-sm font-medium text-gray-700">Username</label><input type="text" id="regUsername" class="mt-1 w-full px-4 py-2 border border-gray-300 rounded-xl" placeholder="creative_thinker" required></div>
+              <div><label class="block text-sm font-medium text-gray-700">Password (min 3 chars)</label><input type="password" id="regPassword" class="mt-1 w-full px-4 py-2 border border-gray-300 rounded-xl" required></div>
+              <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 rounded-xl transition">Create account ✨</button>
+            </form>
+          `;
+          document.getElementById('registerForm')?.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const username = document.getElementById('regUsername').value.trim();
+            const password = document.getElementById('regPassword').value;
+            const result = registerUser(username, password);
+            if (result.success) {
+              // auto login
+              const autoLogin = loginUser(username, password);
+              if (autoLogin.success) {
+                setCurrentUser(autoLogin.user);
+                showToast(`Account created! Welcome ${username}`, 'success');
+                renderApp();
+              } else {
+                showToast("Registered! Please login.", "info");
+                activeTab = 'login';
+                renderForm();
+                document.getElementById('tabLogin')?.click();
+              }
+            } else {
+              showToast(result.msg, 'error');
+            }
+          });
+        }
+      }
+      const loginBtn = document.getElementById('tabLogin');
+      const regBtn = document.getElementById('tabRegister');
+      loginBtn?.addEventListener('click', () => { activeTab = 'login'; loginBtn.classList.add('bg-white','shadow-sm','text-indigo-600'); regBtn.classList.remove('bg-white','shadow-sm','text-indigo-600'); regBtn.classList.add('text-gray-600'); renderForm(); });
+      regBtn?.addEventListener('click', () => { activeTab = 'register'; regBtn.classList.add('bg-white','shadow-sm','text-indigo-600'); loginBtn.classList.remove('bg-white','shadow-sm','text-indigo-600'); loginBtn.classList.add('text-gray-600'); renderForm(); });
+      renderForm();
+    }
+
+    // MAIN BLOG DASHBOARD (after login)
+    function renderBlogDashboard(container) {
+      const user = getCurrentUser();
+      if (!user) return;
+      container.innerHTML = `
+        <div class="bg-white border-b border-gray-200 sticky top-0 z-10 shadow-sm">
+          <div class="max-w-6xl mx-auto px-4 sm:px-6 py-4 flex flex-wrap justify-between items-center gap-3">
+            <div class="flex items-center gap-2 cursor-pointer" id="navHomeBtn">
+              <i class="fas fa-blog text-2xl text-indigo-600"></i>
+              <h1 class="text-xl font-bold text-gray-800">NexusBlog</h1>
+            </div>
+            <div class="flex items-center gap-3 flex-wrap">
+              <span class="text-sm bg-indigo-50 px-3 py-1 rounded-full text-indigo-700"><i class="far fa-user-circle mr-1"></i> ${user.username}</span>
+              <button id="createPostBtn" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-1.5 rounded-full text-sm font-medium transition"><i class="fas fa-plus mr-1"></i> New Post</button>
+              <button id="logoutBtnGlobal" class="text-gray-500 hover:text-red-500 transition text-sm"><i class="fas fa-sign-out-alt mr-1"></i> Logout</button>
+            </div>
+          </div>
+        </div>
+        <main class="max-w-6xl mx-auto px-4 sm:px-6 py-8 w-full fade-in" id="dynamicContent"></main>
+      `;
+      document.getElementById('navHomeBtn')?.addEventListener('click', () => { navigateToList(); });
+      document.getElementById('createPostBtn')?.addEventListener('click', () => { navigateToCreate(); });
+      document.getElementById('logoutBtnGlobal')?.addEventListener('click', () => { setCurrentUser(null); renderApp(); showToast("Logged out", "info"); });
+      renderDynamicView();
+    }
+
+    function renderDynamicView() {
+      const contentDiv = document.getElementById('dynamicContent');
+      if (!contentDiv) return;
+      const user = getCurrentUser();
+      if (!user) return;
+      if (currentView === 'create') {
+        renderCreateEditForm(contentDiv, 'create');
+      } else if (currentView === 'edit' && editPostData) {
+        renderCreateEditForm(contentDiv, 'edit', editPostData);
+      } else if (currentView === 'detail' && selectedPostId) {
+        renderPostDetail(contentDiv, selectedPostId);
+      } else {
+        renderPostList(contentDiv);
+      }
+    }
+
+    function renderPostList(container) {
+      const posts = getAllPosts();
+      const user = getCurrentUser();
+      container.innerHTML = `
+        <div class="mb-6 flex justify-between items-center flex-wrap gap-3">
+          <h2 class="text-2xl font-bold text-gray-800"><i class="fas fa-newspaper mr-2 text-indigo-500"></i>All articles</h2>
+          <span class="text-sm text-gray-500">${posts.length} post${posts.length !== 1 ? 's' : ''}</span>
+        </div>
+        <div class="grid gap-6 md:grid-cols-2 lg:grid-cols-2">
+          ${posts.length === 0 ? '<div class="col-span-full text-center py-16 bg-gray-50 rounded-2xl"><i class="fas fa-pen-fade text-4xl text-gray-300 mb-3"></i><p class="text-gray-500">No posts yet. Be the first to create one!</p></div>' : ''}
+          ${posts.map(post => `
+            <div class="bg-white rounded-2xl border border-gray-200 p-5 card-hover transition-smooth shadow-sm">
+              <div class="flex justify-between items-start">
+                <div class="flex-1">
+                  <h3 class="text-xl font-bold text-gray-800 hover:text-indigo-600 cursor-pointer post-title-link" data-post-id="${post.id}">${escapeHtml(post.title)}</h3>
+                  <div class="flex items-center gap-2 text-xs text-gray-500 mt-2"><i class="far fa-user-circle"></i> ${escapeHtml(post.authorName)} · ${formatDate(post.createdAt)}</div>
+                  <p class="text-gray-600 mt-3 line-clamp-2">${escapeHtml(post.content.substring(0, 120))}${post.content.length > 120 ? '…' : ''}</p>
+                </div>
+              </div>
+              <div class="flex gap-3 justify-end mt-4 border-t pt-3 border-gray-100">
+                <button class="text-indigo-500 text-sm font-medium read-more-btn" data-post-id="${post.id}"><i class="fas fa-comment-dots mr-1"></i> Read & Comment</button>
+                ${post.authorId === user.id ? `
+                  <button class="text-amber-600 text-sm edit-post-btn" data-post-id="${post.id}" data-title="${escapeHtml(post.title)}" data-content="${escapeHtml(post.content)}"><i class="fas fa-edit mr-1"></i> Edit</button>
+                  <button class="text-red-500 text-sm delete-post-btn" data-post-id="${post.id}"><i class="fas fa-trash-alt mr-1"></i> Delete</button>
+                ` : ''}
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+      // attach event listeners
+      document.querySelectorAll('.read-more-btn, .post-title-link').forEach(el => {
+        el.addEventListener('click', (e) => {
+          const id = parseInt(el.dataset.postId);
+          if (id) { navigateToDetail(id); }
+        });
+      });
+      document.querySelectorAll('.edit-post-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const id = parseInt(btn.dataset.postId);
+          const post = getPostById(id);
+          if (post && post.authorId === user.id) { editPostData = post; currentView = 'edit'; renderDynamicView(); }
+          else showToast("Cannot edit this post", 'error');
+        });
+      });
+      document.querySelectorAll('.delete-post-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const id = parseInt(btn.dataset.postId);
+          if (confirm("Are you sure you want to delete this post? All comments will vanish.")) {
+            if (deletePost(id)) { showToast("Post deleted successfully", "success"); navigateToList(); }
+            else showToast("Error deleting post", "error");
+          }
+        });
+      });
+    }
+
+    function renderPostDetail(container, postId) {
+      const post = getPostById(postId);
+      if (!post) { showToast("Post not found", "error"); navigateToList(); return; }
+      const user = getCurrentUser();
+      const comments = getCommentsByPost(postId);
+      container.innerHTML = `
+        <div class="bg-white rounded-2xl border border-gray-200 p-6 md:p-8 shadow-sm">
+          <div class="mb-4 flex flex-wrap justify-between items-center gap-3">
+            <h1 class="text-3xl font-extrabold text-gray-800 break-words">${escapeHtml(post.title)}</h1>
+            <div class="flex gap-2">
+              ${post.authorId === user.id ? `<button id="editPostFromDetail" class="bg-amber-100 text-amber-700 px-3 py-1.5 rounded-xl text-sm"><i class="fas fa-pen"></i> Edit</button>
+              <button id="deletePostFromDetail" class="bg-red-100 text-red-600 px-3 py-1.5 rounded-xl text-sm"><i class="fas fa-trash"></i> Delete</button>` : ''}
+            </div>
+          </div>
+          <div class="flex items-center gap-3 text-sm text-gray-500 border-b pb-4 mb-5"><span><i class="far fa-user"></i> ${escapeHtml(post.authorName)}</span> <span><i class="far fa-calendar-alt"></i> ${formatDate(post.createdAt)}</span> ${post.updatedAt !== post.createdAt ? `<span><i class="fas fa-edit"></i> edited</span>` : ''}</div>
+          <div class="prose max-w-none text-gray-700 markdown-preview whitespace-pre-wrap mb-8">${escapeHtml(post.content)}</div>
+          
+          <div class="border-t pt-6 mt-4">
+            <h3 class="text-xl font-bold flex items-center gap-2"><i class="fas fa-comments text-indigo-500"></i> Comments (${comments.length})</h3>
+            <div id="commentListArea" class="space-y-4 mt-5 max-h-[400px] overflow-y-auto pr-1"></div>
+            <div class="mt-6 bg-gray-50 p-4 rounded-xl">
+              <textarea id="newCommentContent" rows="2" placeholder="Write your insight..." class="w-full border border-gray-200 rounded-xl px-4 py-2 focus:ring-indigo-400"></textarea>
+              <button id="submitCommentBtn" class="mt-2 bg-indigo-600 text-white px-5 py-2 rounded-full text-sm hover:bg-indigo-700 transition"><i class="fas fa-paper-plane mr-1"></i> Post Comment</button>
+            </div>
+          </div>
+        </div>
+      `;
+      const commentArea = document.getElementById('commentListArea');
+      function renderComments() {
+        const freshComments = getCommentsByPost(postId);
+        if (!commentArea) return;
+        if (freshComments.length === 0) { commentArea.innerHTML = '<div class="text-center py-8 text-gray-400"><i class="far fa-comment-dots text-2xl"></i><p>No comments yet. Start the conversation!</p></div>'; return; }
+        commentArea.innerHTML = freshComments.map(c => `
+          <div class="comment-bubble p-3 bg-white border border-gray-100 rounded-2xl shadow-sm">
+            <div class="flex justify-between items-start"><div><span class="font-semibold text-indigo-800">${escapeHtml(c.userName)}</span> <span class="text-xs text-gray-400 ml-2">${formatDate(c.createdAt)}</span></div>
+            ${c.userId === user.id ? `<button class="text-red-400 hover:text-red-700 text-sm delete-comment-btn" data-comment-id="${c.id}"><i class="fas fa-trash-alt"></i></button>` : ''}</div>
+            <p class="text-gray-700 mt-1 text-sm">${escapeHtml(c.content)}</p>
+          </div>
+        `).join('');
+        document.querySelectorAll('.delete-comment-btn').forEach(btn => {
+          btn.addEventListener('click', (e) => {
+            const commentId = parseInt(btn.dataset.commentId);
+            if (deleteComment(commentId, user.id)) { showToast("Comment deleted", "success"); renderComments(); }
+            else showToast("Cannot delete this comment", "error");
+          });
+        });
+      }
+      renderComments();
+      document.getElementById('submitCommentBtn')?.addEventListener('click', () => {
+        const content = document.getElementById('newCommentContent')?.value;
+        if (!content.trim()) return showToast("Comment cannot be empty", "error");
+        const comment = addComment(post.id, user.id, user.username, content);
+        if (comment) { showToast("Comment added!", "success"); document.getElementById('newCommentContent').value = ''; renderComments(); }
+      });
+      document.getElementById('editPostFromDetail')?.addEventListener('click', () => { editPostData = post; currentView = 'edit'; renderDynamicView(); });
+      document.getElementById('deletePostFromDetail')?.addEventListener('click', () => { if(confirm("Delete this post?")) { if(deletePost(post.id)){ showToast("Post deleted"); navigateToList(); } } });
+    }
+
+    function renderCreateEditForm(container, mode, post = null) {
+      const isEdit = mode === 'edit';
+      const titleVal = isEdit ? post.title : '';
+      const contentVal = isEdit ? post.content : '';
+      container.innerHTML = `
+        <div class="max-w-3xl mx-auto bg-white rounded-2xl border p-6 md:p-8 shadow-sm">
+          <h2 class="text-2xl font-bold mb-5">${isEdit ? '✏️ Edit your story' : '📝 Create a new post'}</h2>
+          <form id="postForm">
+            <div class="mb-5"><label class="block font-medium mb-1">Title</label><input type="text" id="postTitle" class="w-full border border-gray-300 rounded-xl p-3 focus:ring-2 focus:ring-indigo-300" value="${escapeHtml(titleVal)}" required></div>
+            <div class="mb-5"><label class="block font-medium mb-1">Content</label><textarea id="postContent" rows="8" class="w-full border border-gray-300 rounded-xl p-3 focus:ring-2 focus:ring-indigo-300" required>${escapeHtml(contentVal)}</textarea></div>
+            <div class="flex gap-3"><button type="submit" class="bg-indigo-600 text-white px-6 py-2 rounded-xl font-semibold">${isEdit ? 'Update Post' : 'Publish Post'}</button> <button type="button" id="cancelFormBtn" class="bg-gray-200 text-gray-700 px-6 py-2 rounded-xl">Cancel</button></div>
+          </form>
+        </div>
+      `;
+      document.getElementById('postForm')?.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const title = document.getElementById('postTitle').value.trim();
+        const content = document.getElementById('postContent').value.trim();
+        if (!title || !content) return showToast("Title & content required", "error");
+        const user = getCurrentUser();
+        if (isEdit && post) {
+          if (updatePost(post.id, title, content)) { showToast("Post updated!", "success"); navigateToDetail(post.id); }
+          else showToast("Update failed", "error");
+        } else {
+          const newPost = createPost(title, content, user.id, user.username);
+          if (newPost) { showToast("Post published!", "success"); navigateToDetail(newPost.id); }
+          else showToast("Error", "error");
+        }
+      });
+      document.getElementById('cancelFormBtn')?.addEventListener('click', () => navigateToList());
+    }
+
+    // navigation helpers
+    function navigateToList() { currentView = 'list'; selectedPostId = null; editPostData = null; renderDynamicView(); }
+    function navigateToDetail(postId) { selectedPostId = postId; currentView = 'detail'; editPostData = null; renderDynamicView(); }
+    function navigateToCreate() { currentView = 'create'; editPostData = null; selectedPostId = null; renderDynamicView(); }
+
+    function formatDate(iso) { if(!iso) return 'recent'; return new Date(iso).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }); }
+    function escapeHtml(str) { if(!str) return ''; return str.replace(/[&<>]/g, function(m){ if(m === '&') return '&amp;'; if(m === '<') return '&lt;'; if(m === '>') return '&gt;'; return m;}); }
+
+    // BOOTSTRAP
+    initializeDatabase();
+    setCurrentUser(getCurrentUser());
+    renderApp();
+  </script>
+</body>
+</html>
